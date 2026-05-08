@@ -7,7 +7,7 @@
 
 </div>
 
-A command-line tool that turns natural-language video edit requests into FFmpeg commands and runs them.
+A command-line tool that turns natural-language edit requests into FFmpeg commands and runs them.
 
 ```
 ffmpegi convert this to mp4 video.avi
@@ -17,7 +17,7 @@ ffmpegi rip the audio as wav speech.mkv
 ffmpegi compress to under 25 mb video.mp4
 ```
 
-No quotes required. The tool figures out which arguments are the request and which are file paths.
+The tool figures out which arguments are the request and which are file paths.
 
 ## Requirements
 
