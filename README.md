@@ -5,7 +5,13 @@
 ### FFMPEG Intelligent
 <sub><i>or ffmpeg idiot in my case</i></sub>
 
-</div>
+<br/>
+
+<a href="#readme-top">
+  <img alt="typing" src="https://readme-typing-svg.demolab.com/?lines=ffmpegi+convert+this+to+mp4+video.avi;ffmpegi+compress+for+discord+big_video.mp4;ffmpegi+rip+the+audio+as+wav+speech.mkv;ffmpegi+compress+to+under+25+mb+video.mp4&font=Fira+Code&size=20&duration=2600&pause=600&color=A855F7&center=true&width=720&height=46&vCenter=true"/>
+</a>
+
+<br/><br/>
 
 A command-line tool that turns natural-language edit requests into FFmpeg commands and runs them.
 
@@ -105,11 +111,11 @@ python -m pytest tests/ -q
 
 The parser is pure rule-based and deterministic. Same input always produces the same output.
 
-## Not supported
+## Not supported <sub>yet</sub> 
 
-Subtitle work, watermarks, color grading, HDR, stabilization, AI upscaling, denoise, transitions, reverse, speed changes, splitting one video into multiple files. The tool returns a clear message instead of trying.
+Subtitle work, watermarks, color grading, HDR, stabilization, AI upscaling, denoise, transitions, reverse, speed changes, splitting one video into multiple files, or feeding your dog. The tool returns a clear message instead of trying.
 
-##TLDR for regular(ish) people
+# TLDR for regular(ish) people
 
 basically add the exe to your path or put it in your system32 folder (i know it sounds sus) and then you can just type anywhere in cmd prompt with natrual language eg
 ```
