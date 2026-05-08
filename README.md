@@ -1,8 +1,11 @@
+<div align="center">
+
 # FFMPEGI
 
-**FFMPEG Intelligent**
+### FFMPEG Intelligent
+<sub><i>or ffmpeg idiot in my case</i></sub>
 
-<sub>or ffmpeg idiot in my case</sub>
+</div>
 
 A command-line tool that turns natural-language video edit requests into FFmpeg commands and runs them.
 
