@@ -109,6 +109,14 @@ The parser is pure rule-based and deterministic. Same input always produces the 
 
 Subtitle work, watermarks, color grading, HDR, stabilization, AI upscaling, denoise, transitions, reverse, speed changes, splitting one video into multiple files. The tool returns a clear message instead of trying.
 
+##TLDR for regular(ish) people
+
+basically add the exe to your path or put it in your system32 folder (i know it sounds sus) and then you can just type anywhere in cmd prompt with natrual language eg
+```
+ffmpegi convert dis video to mkv stupidvideofile.mp4
+```
+and poof (◡◕⏖◕)ᑐ🝐 ⠁⭒*.✩.*⭒⠁
+that mf is now stupidvideofile.mkv
+
 ## License
 
-MIT
