@@ -452,6 +452,70 @@ NUMBER_WORDS: Dict[str, int] = {
     "one hundred": 100, "hundred": 100, "thousand": 1000, "million": 1000000, "a": 1, "an": 1
 }
 
+# --- DOWNLOAD VOCABULARY ---
+
+DOWNLOAD_VERBS: List[str] = [
+    "download", "grab", "get", "fetch", "save", "rip",
+    "yoink", "snag", "pull",
+]
+
+# Subset used for intent detection — unambiguous download-only verbs
+DOWNLOAD_INTENT_VERBS: List[str] = [
+    "download", "grab", "fetch", "yoink", "snag",
+]
+
+QUALITY_KEYWORDS: Dict[str, List[str]] = {
+    "best":  ["best quality", "highest quality", "max quality", "top quality",
+              "best", "highest", "maximum"],
+    "worst": ["worst quality", "lowest quality", "smallest", "lowest",
+              "worst", "tiny", "potato"],
+    "audio_only": ["audio only", "just the audio", "just audio",
+                   "music only", "sound only"],
+}
+
+SUB_KEYWORDS: List[str] = [
+    "with subs", "with subtitles", "with captions", "subbed",
+    "include subs", "include subtitles",
+]
+
+SUB_AUTO_KEYWORDS: List[str] = [
+    "auto subs", "auto-generated subs", "youtube subs", "machine subs",
+    "auto generated subs",
+]
+
+PLAYLIST_KEYWORDS: Dict[str, List[str]] = {
+    "force_playlist": [
+        "whole playlist", "entire playlist", "the playlist",
+        "full playlist", "all videos",
+    ],
+    "single_only": [
+        "just this video", "just this one", "single video",
+        "not the playlist", "no playlist",
+    ],
+}
+
+THUMBNAIL_KEYWORDS: List[str] = [
+    "with thumbnail", "with cover art", "embed thumbnail", "save thumbnail",
+]
+
+METADATA_KEYWORDS: List[str] = [
+    "with metadata", "embed metadata", "with info", "embed tags",
+]
+
+# Matches "in english subs", "with spanish subtitles", etc.
+SUB_LANG_RE: re.Pattern = re.compile(
+    r'(?:in|with)\s+'
+    r'(english|spanish|french|german|japanese|korean|chinese|portuguese|italian|russian)'
+    r'\s+subs?(?:titles?)?',
+    re.IGNORECASE,
+)
+
+SUB_LANG_MAP: Dict[str, str] = {
+    'english': 'en', 'spanish': 'es', 'french': 'fr', 'german': 'de',
+    'japanese': 'ja', 'korean': 'ko', 'chinese': 'zh', 'portuguese': 'pt',
+    'italian': 'it', 'russian': 'ru',
+}
+
 TOTAL_ENTRIES = (
     len(SLANG_MAP) +
     len(ABBREVIATIONS) +
@@ -473,5 +537,12 @@ TOTAL_ENTRIES = (
     len(RELATIVE_TIME_PATTERNS) +
     len(FILESIZE_PATTERNS) +
     len(UNIT_TO_BYTES) +
-    len(NUMBER_WORDS)
+    len(NUMBER_WORDS) +
+    len(DOWNLOAD_VERBS) +
+    sum(len(v) for v in QUALITY_KEYWORDS.values()) +
+    len(SUB_KEYWORDS) +
+    len(SUB_AUTO_KEYWORDS) +
+    sum(len(v) for v in PLAYLIST_KEYWORDS.values()) +
+    len(THUMBNAIL_KEYWORDS) +
+    len(METADATA_KEYWORDS)
 )
