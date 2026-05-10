@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 
 _TIME_RE = re.compile(r'time=(\d{2}:\d{2}:\d{2}(?:\.\d+)?)')
@@ -17,6 +18,19 @@ def _secs_to_hms(secs: float) -> str:
     m = int((secs % 3600) // 60)
     s = secs % 60
     return f"{h:02d}:{m:02d}:{s:05.2f}"
+
+
+def run_ytdlp(args: list[str]) -> tuple[int, str]:
+    """Run yt-dlp and capture stdout (the downloaded filepath line).
+
+    stderr is inherited (flows to terminal so the user sees the progress bar).
+    Returns (exit_code, captured_stdout_stripped).
+    """
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=None, text=True)
+    assert proc.stdout is not None
+    captured = proc.stdout.read()
+    proc.wait()
+    return proc.returncode, captured.strip()
 
 
 def run_ffmpeg(

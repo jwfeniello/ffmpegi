@@ -9,3 +9,10 @@ def check_ffmpeg() -> None:
         raise SystemExit(
             f"{tools} not found. Install with: winget install Gyan.FFmpeg"
         )
+
+
+def check_ytdlp() -> None:
+    if not shutil.which('yt-dlp'):
+        raise SystemExit(
+            "yt-dlp not found. Install: pip install yt-dlp"
+        )

@@ -8,10 +8,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from vocabulary import (
     TRIM_VERBS, CONVERT_VERBS, RESIZE_VERBS, COMPRESS_VERBS,
-    EXTRACT_AUDIO_VERBS, MERGE_VERBS,
+    EXTRACT_AUDIO_VERBS, MERGE_VERBS, DOWNLOAD_INTENT_VERBS,
     RESOLUTION_SYNONYMS, FORMAT_ALIASES, PRESET_TRIGGERS,
     RANGE_PATTERNS, DURATION_PATTERNS, RELATIVE_TIME_PATTERNS,
     FILESIZE_PATTERNS, UNIT_TO_BYTES, SEQUENCERS, NUMBER_WORDS,
+    QUALITY_KEYWORDS, SUB_KEYWORDS, SUB_AUTO_KEYWORDS,
+    PLAYLIST_KEYWORDS, THUMBNAIL_KEYWORDS, METADATA_KEYWORDS,
+    SUB_LANG_RE, SUB_LANG_MAP,
 )
 from models import EditPlan, ClarificationError
 from normalize import normalize
@@ -260,11 +263,12 @@ _INTENT_VERB_LISTS: list[tuple[str, list[str]]] = [
     ('compress',      list(COMPRESS_VERBS)),
     ('extract_audio', list(EXTRACT_AUDIO_VERBS)),
     ('merge',         list(MERGE_VERBS)),
+    ('download',      list(DOWNLOAD_INTENT_VERBS)),
 ]
 
 _INTENT_PRIORITY = {
     'trim': 6, 'convert': 5, 'resize': 4,
-    'compress': 3, 'extract_audio': 2, 'merge': 1,
+    'compress': 3, 'extract_audio': 2, 'merge': 1, 'download': 7,
 }
 
 
@@ -541,6 +545,73 @@ _AMBIGUOUS_PATTERNS: list[tuple[re.Pattern, ClarificationError]] = [
 ]
 
 
+def _extract_download_params(text: str) -> dict:
+    """Extract download-specific fields from full request text when a URL is present.
+
+    Handles quality keywords (best/worst/audio_only), subtitles, playlist,
+    thumbnail, and metadata.  Resolution is handled per-segment via the
+    'download' intent branch in _parse_segment.
+    """
+    params: dict = {}
+    tl = text.lower()
+
+    # Quality keywords (best/worst/audio_only) — check longest phrases first
+    for quality_val, phrases in QUALITY_KEYWORDS.items():
+        for phrase in sorted(phrases, key=len, reverse=True):
+            if re.search(re.escape(phrase.lower()), tl):
+                if quality_val == 'audio_only':
+                    params['download_audio_only'] = True
+                elif 'download_quality' not in params:
+                    params['download_quality'] = quality_val
+                break
+
+    # Auto subs (check before regular subs to avoid double-match)
+    for kw in SUB_AUTO_KEYWORDS:
+        if kw.lower() in tl:
+            params['download_subs'] = True
+            params['download_sub_auto'] = True
+            break
+
+    # Regular subs
+    if 'download_subs' not in params:
+        for kw in SUB_KEYWORDS:
+            if kw.lower() in tl:
+                params['download_subs'] = True
+                params.setdefault('download_sub_lang', 'en')
+                break
+
+    # Explicit sub language: "with english subs", "in japanese subtitles"
+    m = SUB_LANG_RE.search(text)
+    if m:
+        params['download_subs'] = True
+        params['download_sub_lang'] = SUB_LANG_MAP.get(m.group(1).lower(), 'en')
+
+    # Playlist
+    for kw in PLAYLIST_KEYWORDS.get('force_playlist', []):
+        if kw.lower() in tl:
+            params['download_playlist'] = True
+            break
+    if 'download_playlist' not in params:
+        for kw in PLAYLIST_KEYWORDS.get('single_only', []):
+            if kw.lower() in tl:
+                params['download_playlist'] = False
+                break
+
+    # Thumbnail
+    for kw in THUMBNAIL_KEYWORDS:
+        if kw.lower() in tl:
+            params['download_thumbnail'] = True
+            break
+
+    # Metadata
+    for kw in METADATA_KEYWORDS:
+        if kw.lower() in tl:
+            params['download_metadata'] = True
+            break
+
+    return params
+
+
 def _parse_segment(
     segment: str, intent: str | None, video_duration: float | None
 ) -> dict | ClarificationError:
@@ -575,6 +646,39 @@ def _parse_segment(
         audio_fmt = _extract_format(segment)
         if audio_fmt in _AUDIO_FORMATS:
             fields['audio_format'] = audio_fmt
+    elif intent == 'download':
+        # Resolution → download_quality so it doesn't conflict with post-download resize
+        # Also clear target_resolution set by the early unconditional extraction above.
+        res = _extract_resolution(segment)
+        if res:
+            fields.pop('target_resolution', None)
+            fields['download_quality'] = res
+
+        fmt = _extract_format(segment)
+        if fmt and fmt not in _AUDIO_FORMATS:
+            fields['download_format'] = fmt
+        elif fmt and fmt in _AUDIO_FORMATS:
+            # Audio format specified → treat as audio-only; normalizer converts to download_audio_only
+            fields['extract_audio'] = True
+            fields['audio_format'] = fmt
+
+        # Audio extraction in download context (normalizer will convert to download_audio_only)
+        audio_result = _extract_audio(segment)
+        if isinstance(audio_result, ClarificationError):
+            return audio_result
+        audio_flag, audio_fmt = audio_result
+        if audio_flag:
+            fields['extract_audio'] = True
+            if audio_fmt:
+                fields['audio_format'] = audio_fmt
+
+        # Post-download ffmpeg ops may still be requested in the same segment
+        preset = _extract_preset(segment)
+        if preset:
+            fields['target_preset'] = preset
+        filesize = _extract_filesize(segment)
+        if filesize is not None:
+            fields['target_filesize_mb'] = filesize
     else:
         fmt = _extract_format(segment)
         if fmt:
@@ -611,6 +715,11 @@ def _parse_segment(
 _MERGEABLE_FIELDS = {
     'trim_start', 'trim_end', 'target_resolution', 'target_format',
     'target_filesize_mb', 'target_preset', 'extract_audio', 'audio_format',
+    # download-specific fields (populated from segments or _extract_download_params)
+    'download_quality', 'download_format', 'download_audio_only',
+    'download_audio_format', 'download_subs', 'download_sub_lang',
+    'download_sub_auto', 'download_playlist', 'download_thumbnail',
+    'download_metadata',
 }
 
 
@@ -643,6 +752,7 @@ def parse(
     text: str,
     files: list[Path] | None = None,
     video_duration: float | None = None,
+    url: str | None = None,
 ) -> EditPlan | ClarificationError:
     """Convert a natural-language edit request to an EditPlan.
 
@@ -653,6 +763,8 @@ def parse(
                input, returns ClarificationError(code='no_input_file').
         video_duration: Video length in seconds. Required for relative-time
                         patterns like 'last 2 minutes'.
+        url: Download URL (yt-dlp). When set, enables download mode and
+             populates download_* fields on the returned EditPlan.
 
     Returns:
         EditPlan on success, ClarificationError when clarification is needed.
@@ -708,18 +820,55 @@ def parse(
             'target_filesize_mb', 'target_preset', 'audio_format',
         )) or merged.get('extract_audio', False)
 
-        if has_edit and not has_files:
+        # URL supplies the input — skip the no_input_file guard for downloads
+        if has_edit and not has_files and not url:
             return ClarificationError(
                 reason="No input file specified.",
                 code='no_input_file',
             )
         plan_inputs = [resolved_files[0]] if resolved_files else []
 
-    if not merged and not is_merge:
+    # Pure download with no other recognised fields is still a valid request
+    if not merged and not is_merge and not url:
         return ClarificationError(
             reason="I couldn't understand that request.",
             code='unrecognized',
         )
+
+    # Normalize: if target_format is audio-only, route through extract_audio
+    # so the builder emits -vn and the correct audio codec instead of video flags.
+    if merged.get('target_format') in _AUDIO_FORMATS:
+        merged['extract_audio'] = True
+        if merged.get('audio_format') is None:
+            merged['audio_format'] = merged['target_format']
+        merged['target_format'] = None
+
+    # --- URL / download post-processing ---
+    if url:
+        # Overlay download-specific params extracted from the full text
+        dp = _extract_download_params(normalized)
+        for k, v in dp.items():
+            if not merged.get(k):  # don't overwrite values set by segment parsing
+                merged[k] = v
+
+        # target_resolution from a non-download segment → download_quality
+        # (only when download_quality wasn't already set by a 'download' intent segment)
+        if merged.get('target_resolution') and not merged.get('download_quality'):
+            merged['download_quality'] = merged.pop('target_resolution')
+
+        # target_format (video) → download_format (container for yt-dlp)
+        if merged.get('target_format') and merged['target_format'] not in _AUDIO_FORMATS:
+            if not merged.get('download_format'):
+                merged['download_format'] = merged.pop('target_format')
+
+        merged['download_url'] = url
+
+        # Normalize: URL + extract_audio → download_audio_only (use yt-dlp -x path)
+        if merged.get('extract_audio'):
+            merged['download_audio_only'] = True
+            merged['download_audio_format'] = merged.get('audio_format') or 'mp3'
+            merged['extract_audio'] = False
+            merged['audio_format'] = None
 
     return EditPlan(
         inputs=plan_inputs,
@@ -731,4 +880,15 @@ def parse(
         target_preset=merged.get('target_preset'),
         extract_audio=merged.get('extract_audio', False),
         audio_format=merged.get('audio_format'),
+        download_url=merged.get('download_url'),
+        download_quality=merged.get('download_quality'),
+        download_format=merged.get('download_format'),
+        download_audio_only=merged.get('download_audio_only', False),
+        download_audio_format=merged.get('download_audio_format'),
+        download_subs=merged.get('download_subs', False),
+        download_sub_lang=merged.get('download_sub_lang'),
+        download_sub_auto=merged.get('download_sub_auto', False),
+        download_playlist=merged.get('download_playlist'),
+        download_thumbnail=merged.get('download_thumbnail', False),
+        download_metadata=merged.get('download_metadata', False),
     )

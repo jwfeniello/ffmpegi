@@ -6,6 +6,19 @@ from models import EditPlan
 from compute import compute_video_bitrate
 
 
+# Preset → (container, video_codec, audio_codec).
+# When a preset is active these values always win, regardless of input container.
+PRESET_OUTPUT: dict[str, tuple[str, str, str]] = {
+    'discord':   ('mp4', 'libx264', 'aac'),
+    'youtube':   ('mp4', 'libx264', 'aac'),
+    'mobile':    ('mp4', 'libx264', 'aac'),
+    'twitter':   ('mp4', 'libx264', 'aac'),
+    'instagram': ('mp4', 'libx264', 'aac'),
+    'whatsapp':  ('mp4', 'libx264', 'aac'),
+    'telegram':  ('mp4', 'libx264', 'aac'),
+    'email':     ('mp4', 'libx264', 'aac'),
+}
+
 _VIDEO_CODECS: dict[str, str] = {
     'mp4': 'libx264', 'mkv': 'libx264', 'mov': 'libx264',
     'webm': 'libvpx-vp9', 'avi': 'mpeg4', 'flv': 'libx264', 'wmv': 'wmv2',
@@ -22,6 +35,72 @@ _RES_HEIGHT: dict[str, int] = {
     '144p': 144, '240p': 240, '360p': 360, '480p': 480,
     '720p': 720, '1080p': 1080, '1440p': 1440, '2160p': 2160, '4320p': 4320,
 }
+
+
+def build_ytdlp_args(plan: EditPlan, output_dir: Path) -> list[str]:
+    """Build a yt-dlp argv list from an EditPlan.
+
+    Side-effect: clears plan.trim_start / plan.trim_end when a download
+    section is emitted, so the subsequent ffmpeg pass does not re-trim.
+    """
+    assert plan.download_url, "build_ytdlp_args called without download_url"
+    args: list[str] = ['yt-dlp']
+
+    # Quality / format selection
+    if plan.download_audio_only:
+        args.append('-x')
+        if plan.download_audio_format:
+            args += ['--audio-format', plan.download_audio_format]
+    elif plan.download_quality in ('best', None):
+        args += ['-f', 'bestvideo+bestaudio/best']
+    elif plan.download_quality == 'worst':
+        args += ['-f', 'worst']
+    elif plan.download_quality and plan.download_quality.endswith('p'):
+        h = plan.download_quality[:-1]
+        args += ['-f', f'bestvideo[height<={h}]+bestaudio/best[height<={h}]']
+
+    # Container remux
+    if plan.download_format and not plan.download_audio_only:
+        args += ['--merge-output-format', plan.download_format]
+        args += ['--remux-video', plan.download_format]
+
+    # Section download (consumes trim so ffmpeg doesn't re-trim)
+    if plan.trim_start is not None or plan.trim_end is not None:
+        start = plan.trim_start or 0.0
+        end_str = f'{plan.trim_end:.3f}' if plan.trim_end is not None else 'inf'
+        args += ['--download-sections', f'*{start:.3f}-{end_str}']
+        plan.trim_start = None
+        plan.trim_end = None
+
+    # Subtitles
+    if plan.download_subs:
+        if plan.download_sub_auto:
+            args.append('--write-auto-subs')
+        else:
+            args.append('--write-subs')
+        lang = plan.download_sub_lang or 'en'
+        args += ['--sub-langs', lang, '--convert-subs', 'srt']
+
+    # Playlist behaviour
+    if plan.download_playlist is True:
+        args.append('--yes-playlist')
+    elif plan.download_playlist is False:
+        args.append('--no-playlist')
+
+    # Extras
+    if plan.download_thumbnail:
+        args += ['--embed-thumbnail', '--write-thumbnail']
+    if plan.download_metadata:
+        args.append('--embed-metadata')
+
+    # Output template
+    args += ['-o', str(output_dir / '%(title)s.%(ext)s')]
+
+    # Capture final filepath on stdout; --progress re-enables bar in quiet mode
+    args += ['--print', 'after_move:%(filepath)s', '--progress', '--no-simulate']
+
+    args.append(plan.download_url)
+    return args
 
 
 def get_video_duration(path: Path) -> float:
@@ -88,10 +167,13 @@ def build_ffmpeg_args(
     if vf_parts:
         args += ['-vf', ','.join(vf_parts)]
 
-    out_ext = output_path.suffix.lstrip('.').lower()
-    fmt_key = plan.target_format or out_ext or 'mp4'
-    v_codec = _VIDEO_CODECS.get(fmt_key, 'libx264')
-    a_codec = _AUDIO_CODECS.get(fmt_key, 'aac')
+    if plan.target_preset and plan.target_preset in PRESET_OUTPUT:
+        _, v_codec, a_codec = PRESET_OUTPUT[plan.target_preset]
+    else:
+        out_ext = output_path.suffix.lstrip('.').lower()
+        fmt_key = plan.target_format or out_ext or 'mp4'
+        v_codec = _VIDEO_CODECS.get(fmt_key, 'libx264')
+        a_codec = _AUDIO_CODECS.get(fmt_key, 'aac')
     args += ['-c:v', v_codec, '-c:a', a_codec]
 
     if plan.target_filesize_mb is not None:

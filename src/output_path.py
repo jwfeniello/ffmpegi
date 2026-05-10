@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from models import EditPlan
+from builder import PRESET_OUTPUT
 
 
 def derive_output_path(plan: EditPlan, input_path: Path) -> Path:
@@ -37,7 +38,12 @@ def derive_output_path(plan: EditPlan, input_path: Path) -> Path:
         else:
             suffix = ''
 
-        out_ext = f".{plan.target_format}" if plan.target_format else original_ext
+        if plan.target_preset and plan.target_preset in PRESET_OUTPUT:
+            out_ext = f".{PRESET_OUTPUT[plan.target_preset][0]}"
+        elif plan.target_format:
+            out_ext = f".{plan.target_format}"
+        else:
+            out_ext = original_ext
         out = input_path.parent / f"{stem}{suffix}{out_ext}"
 
     if out == input_path:

@@ -20,9 +20,10 @@ from parser import parse                             # noqa: E402
 from builder import build_ffmpeg_args, get_video_duration  # noqa: E402
 from models import EditPlan, ClarificationError      # noqa: E402
 from output_path import derive_output_path           # noqa: E402
-from runner import run_ffmpeg                        # noqa: E402
-from ffmpeg_check import check_ffmpeg                # noqa: E402
+from runner import run_ffmpeg, run_ytdlp             # noqa: E402
+from ffmpeg_check import check_ffmpeg, check_ytdlp   # noqa: E402
 from vocabulary import FILESIZE_PATTERNS             # noqa: E402
+from builder import build_ytdlp_args                 # noqa: E402
 
 VIDEO_EXTS = frozenset({
     '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv',
@@ -34,25 +35,38 @@ AUDIO_EXTS = frozenset({
 MEDIA_EXTS = VIDEO_EXTS | AUDIO_EXTS
 
 
-def split_request_and_files(tokens: list[str]) -> tuple[str, list[Path]]:
-    """Walk tokens from right, collect trailing media tokens, rest is request.
+def split_request_and_files(
+    tokens: list[str],
+) -> tuple[str, list[Path], str | None]:
+    """Split tokens into (request_text, input_files, url).
 
-    A token is treated as a file if it exists on disk OR has a recognised
-    media extension.  Collection stops at the first token that satisfies
-    neither condition.
+    URL detection: the first token starting with http:// or https:// is
+    treated as the download URL and removed before the file-walk.
+
+    File detection: walk remaining tokens from right; collect tokens that
+    exist on disk OR have a recognised media extension.  Stop at the first
+    token that satisfies neither.  Everything before is the request text.
     """
+    url: str | None = None
+    non_url_tokens: list[str] = []
+    for tok in tokens:
+        if tok.startswith(('http://', 'https://')) and url is None:
+            url = tok
+        else:
+            non_url_tokens.append(tok)
+
     files: list[Path] = []
-    i = len(tokens) - 1
+    i = len(non_url_tokens) - 1
     while i >= 0:
-        tok = tokens[i]
+        tok = non_url_tokens[i]
         p = Path(tok)
         if p.exists() or p.suffix.lower() in MEDIA_EXTS:
             files.insert(0, p)
             i -= 1
         else:
             break
-    request = ' '.join(tokens[: i + 1])
-    return request, files
+    request = ' '.join(non_url_tokens[: i + 1])
+    return request, files, url
 
 
 def _cwd_media_files() -> list[Path]:
@@ -99,18 +113,53 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _has_post_download_ffmpeg_ops(plan: EditPlan) -> bool:
+    """Return True if the plan has ffmpeg operations to run after yt-dlp.
+
+    trim_start/trim_end are excluded — they are consumed by yt-dlp
+    --download-sections and cleared by build_ytdlp_args().
+    """
+    return any([
+        plan.target_resolution is not None,
+        plan.target_format is not None,
+        plan.target_filesize_mb is not None,
+        plan.target_preset is not None,
+        plan.extract_audio,
+        plan.audio_format is not None,
+    ])
+
+
+def _fmt_cmd(args: list[str]) -> str:
+    return ' '.join(shlex.quote(str(a)) for a in args)
+
+
 def main(argv: list[str] | None = None) -> int:
     arg_parser = _build_arg_parser()
     args = arg_parser.parse_args(argv)
 
-    request, input_files = split_request_and_files(args.tokens)
+    # Multiple URLs → error before anything else
+    url_count = sum(1 for t in args.tokens if t.startswith(('http://', 'https://')))
+    if url_count > 1:
+        print("Error: only one URL per command in v1.", file=sys.stderr)
+        return 1
+
+    request, input_files, url = split_request_and_files(args.tokens)
 
     if not request.strip():
         arg_parser.print_help()
         return 1
 
-    # CWD fallback when no files appear at end of argv
-    if not input_files:
+    # Warn and discard local files when a URL is present
+    if url and input_files:
+        print(
+            f"Warning: ignoring input file(s) {[str(f) for f in input_files]} "
+            f"— using URL instead.",
+            file=sys.stderr,
+        )
+        input_files = []
+
+    # CWD fallback (local-file mode only)
+    if not url and not input_files:
         cwd = _cwd_media_files()
         if len(cwd) == 1:
             input_files = cwd
@@ -124,30 +173,42 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: {msg}", file=sys.stderr)
             return 1
 
-    # Verify every collected file exists
+    # Verify every collected local file exists
     for f in input_files:
         if not f.exists():
             print(f"File not found: {f}", file=sys.stderr)
             return 1
 
-    # Verify ffmpeg + ffprobe are on PATH
+    # Check ffmpeg/ffprobe
     try:
         check_ffmpeg()
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
-    # Probe duration when a filesize target is present (needed for bitrate calc
-    # and for progress percentage display)
+    # Check yt-dlp only when needed
+    if url:
+        try:
+            check_ytdlp()
+        except SystemExit as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    # Probe duration for bitrate computation (local files, filesize target only)
     video_duration: float | None = None
-    if _has_filesize_target(request) and input_files:
+    if not url and _has_filesize_target(request) and input_files:
         try:
             video_duration = get_video_duration(input_files[0])
         except Exception:
-            pass  # builder.py will call ffprobe internally as fallback
+            pass
 
-    # Parse natural-language request
-    result = parse(request, files=input_files, video_duration=video_duration)
+    # Parse
+    result = parse(
+        request,
+        files=input_files if input_files else None,
+        video_duration=video_duration,
+        url=url,
+    )
     if isinstance(result, ClarificationError):
         print(f"Error: {result.reason}", file=sys.stderr)
         if result.code:
@@ -162,23 +223,80 @@ def main(argv: list[str] | None = None) -> int:
     if args.explain:
         _print_plan(plan)
 
-    # Derive output path
+    # ------------------------------------------------------------------ #
+    # Download path                                                        #
+    # ------------------------------------------------------------------ #
+    if plan.download_url:
+        output_dir = Path(args.output).parent if args.output else Path.cwd()
+        ytdlp_args = build_ytdlp_args(plan, output_dir)
+
+        # Check for remaining ffmpeg ops (trim already consumed by ytdlp_args)
+        needs_ffmpeg = _has_post_download_ffmpeg_ops(plan)
+
+        if args.dry_run or args.verbose:
+            print(_fmt_cmd(ytdlp_args))
+        if needs_ffmpeg and (args.dry_run or args.verbose):
+            print("  ↳ then ffmpeg on <downloaded file> (command shown after download)")
+
+        if args.dry_run:
+            return 0
+
+        rc, captured = run_ytdlp(ytdlp_args)
+        if rc != 0:
+            return rc
+
+        # Validate the captured filepath
+        lines = [ln.strip() for ln in captured.splitlines() if ln.strip()]
+        filepath_str = lines[-1] if lines else ''
+        downloaded_path = Path(filepath_str) if filepath_str else None
+        if not downloaded_path or not downloaded_path.exists():
+            print("Error: couldn't determine downloaded file path.", file=sys.stderr)
+            return 1
+
+        if not needs_ffmpeg:
+            return 0
+
+        # Wire the downloaded file as the ffmpeg input
+        plan.inputs = [downloaded_path]
+
+        # Probe duration for filesize targets on the downloaded file
+        if plan.target_filesize_mb is not None:
+            try:
+                video_duration = get_video_duration(downloaded_path)
+            except Exception:
+                pass
+
+        if args.output:
+            output_path = Path(args.output)
+        else:
+            output_path = derive_output_path(plan, downloaded_path)
+
+        ffmpeg_args = build_ffmpeg_args(plan, output_path, video_duration=video_duration)
+        if args.verbose:
+            print(_fmt_cmd(ffmpeg_args))
+
+        try:
+            return run_ffmpeg(ffmpeg_args, video_duration=video_duration, verbose=args.verbose)
+        except PermissionError:
+            print(f"Permission denied writing to: {output_path}", file=sys.stderr)
+            return 1
+
+    # ------------------------------------------------------------------ #
+    # Local-file ffmpeg path                                               #
+    # ------------------------------------------------------------------ #
     if args.output:
         output_path = Path(args.output)
     else:
         ref = input_files[0]
         output_path = derive_output_path(plan, ref)
 
-    # Build ffmpeg argv
     ffmpeg_args = build_ffmpeg_args(plan, output_path, video_duration=video_duration)
-
-    # Always show the command
-    print(' '.join(shlex.quote(str(a)) for a in ffmpeg_args))
+    if args.dry_run or args.verbose:
+        print(_fmt_cmd(ffmpeg_args))
 
     if args.dry_run:
         return 0
 
-    # Execute
     try:
         return run_ffmpeg(ffmpeg_args, video_duration=video_duration, verbose=args.verbose)
     except PermissionError:
