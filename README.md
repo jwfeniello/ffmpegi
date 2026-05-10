@@ -165,6 +165,3 @@ or for the YouTube ting
 ffmpegi download in 720p and compress for discord https://youtube.com/watch?v=whatever
 ```
 
-## License
-
-MIT — see [LICENSE](LICENSE).
