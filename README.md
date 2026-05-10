@@ -165,10 +165,6 @@ or for the YouTube ting
 ffmpegi download in 720p and compress for discord https://youtube.com/watch?v=whatever
 ```
 
-and it just shows up in your folder, ready to drag into chat ✨
-
 ## License
-
-<img src="./copyleft.svg" width="60" alt="Copyleft">
 
 MIT — see [LICENSE](LICENSE).
