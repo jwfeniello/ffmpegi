@@ -161,9 +161,36 @@ def build_ffmpeg_args(
         return args
 
     vf_parts: list[str] = []
+
+    # --- resize ---
     if plan.target_resolution:
         h = _RES_HEIGHT.get(plan.target_resolution, 720)
         vf_parts.append(f'scale=-2:{h}')
+    elif plan.target_width and plan.target_height:
+        vf_parts.append(f'scale={plan.target_width}:{plan.target_height}')
+    elif plan.target_width:
+        vf_parts.append(f'scale={plan.target_width}:-2')
+    elif plan.target_height:
+        vf_parts.append(f'scale=-2:{plan.target_height}')
+    elif plan.target_scale_pct is not None:
+        f = plan.target_scale_pct / 100.0
+        vf_parts.append(f'scale=iw*{f:.4f}:ih*{f:.4f}')
+
+    # --- crop ---
+    if plan.crop_aspect:
+        w_r, h_r = (int(x) for x in plan.crop_aspect.split(':'))
+        # Center-crop to aspect ratio: keep full height, clip width (or vice-versa)
+        vf_parts.append(
+            f'crop=if(gt(iw/ih\\,{w_r}/{h_r})\\,ih*{w_r}/{h_r}\\,iw):'
+            f'if(gt(iw/ih\\,{w_r}/{h_r})\\,ih\\,iw*{h_r}/{w_r})'
+        )
+    elif plan.crop_w or plan.crop_h:
+        cw = str(plan.crop_w) if plan.crop_w else 'iw'
+        ch = str(plan.crop_h) if plan.crop_h else 'ih'
+        cx = str(plan.crop_x) if plan.crop_x is not None else f'(iw-{cw})/2'
+        cy = str(plan.crop_y) if plan.crop_y is not None else f'(ih-{ch})/2'
+        vf_parts.append(f'crop={cw}:{ch}:{cx}:{cy}')
+
     if vf_parts:
         args += ['-vf', ','.join(vf_parts)]
 

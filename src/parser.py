@@ -14,7 +14,11 @@ from vocabulary import (
     FILESIZE_PATTERNS, UNIT_TO_BYTES, SEQUENCERS, NUMBER_WORDS,
     QUALITY_KEYWORDS, SUB_KEYWORDS, SUB_AUTO_KEYWORDS,
     PLAYLIST_KEYWORDS, THUMBNAIL_KEYWORDS, METADATA_KEYWORDS,
-    SUB_LANG_RE, SUB_LANG_MAP,
+    SUB_LANG_RE, SUB_LANG_MAP, CUT_AT_PATTERN,
+    RECORD_VERBS, CROP_VERBS,
+    DIMENSIONS_PATTERN, DIMENSIONS_BY_PATTERN,
+    SCALE_PCT_PATTERN, SCALE_MULT_PATTERN, SCALE_WORDS,
+    CROP_ASPECT_MAP, CROP_POSITION_MAP,
 )
 from models import EditPlan, ClarificationError
 from normalize import normalize
@@ -199,6 +203,77 @@ def _extract_filesize(text: str) -> float | None:
     return None
 
 
+def _extract_resize(text: str) -> dict:
+    """Return any of {target_width, target_height, target_scale_pct} found in text."""
+    fields: dict = {}
+
+    # WxH or W by H
+    for pat in (DIMENSIONS_PATTERN, DIMENSIONS_BY_PATTERN):
+        m = pat.search(text)
+        if m:
+            fields['target_width'] = int(m.group('w'))
+            fields['target_height'] = int(m.group('h'))
+            return fields
+
+    # Percentage
+    m = SCALE_PCT_PATTERN.search(text)
+    if m:
+        fields['target_scale_pct'] = float(m.group('pct'))
+        return fields
+
+    # Multiplier (e.g. 2x, 0.5x)
+    m = SCALE_MULT_PATTERN.search(text)
+    if m:
+        fields['target_scale_pct'] = float(m.group('mult')) * 100.0
+        return fields
+
+    # Word-based (half, double, …)
+    for word, pct in SCALE_WORDS.items():
+        if re.search(r'\b' + word + r'\b', text, re.IGNORECASE):
+            fields['target_scale_pct'] = pct
+            return fields
+
+    return fields
+
+
+_CROP_VERB_RE = re.compile(
+    r'\b(?:crop|crops|cropped|cropping|crop\s+to|crop\s+out|trim\s+frame|cut\s+frame'
+    r'|remove\s+black\s+bars?|letterbox\s+crop|zoom\s+crop)\b',
+    re.IGNORECASE,
+)
+
+
+def _extract_crop(text: str) -> dict:
+    """Return crop_* fields found in text, or empty dict.
+
+    Aspect ratios are always treated as crop targets.
+    WxH dimensions only become a crop when an explicit crop verb is present;
+    otherwise they are resize targets handled by _extract_resize.
+    """
+    text_l = text.lower()
+
+    # Aspect ratio — always implies spatial crop (not a resize)
+    for phrase, canonical in sorted(CROP_ASPECT_MAP.items(), key=lambda x: -len(x[0])):
+        if phrase in text_l:
+            return {'crop_aspect': canonical}
+
+    # WxH — only crop when "crop" verb is explicitly present
+    if _CROP_VERB_RE.search(text):
+        m = DIMENSIONS_PATTERN.search(text)
+        if m:
+            result: dict = {'crop_w': int(m.group('w')), 'crop_h': int(m.group('h'))}
+            for phrase, (px, py) in sorted(CROP_POSITION_MAP.items(), key=lambda x: -len(x[0])):
+                if phrase in text_l:
+                    if px is not None:
+                        result['crop_x'] = px
+                    if py is not None:
+                        result['crop_y'] = py
+                    break
+            return result
+
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Span masking and sequencer splitting
 # ---------------------------------------------------------------------------
@@ -264,11 +339,14 @@ _INTENT_VERB_LISTS: list[tuple[str, list[str]]] = [
     ('extract_audio', list(EXTRACT_AUDIO_VERBS)),
     ('merge',         list(MERGE_VERBS)),
     ('download',      list(DOWNLOAD_INTENT_VERBS)),
+    ('record',        list(RECORD_VERBS)),
+    ('crop',          list(CROP_VERBS)),
 ]
 
 _INTENT_PRIORITY = {
     'trim': 6, 'convert': 5, 'resize': 4,
     'compress': 3, 'extract_audio': 2, 'merge': 1, 'download': 7,
+    'record': 8, 'crop': 4,
 }
 
 
@@ -399,6 +477,17 @@ _FROM_FOR_PATTERN = re.compile(
 )
 
 
+def _fmt_time(secs: float) -> str:
+    """Format seconds as a compact human-readable time string."""
+    if secs < 60:
+        return f"{int(secs)}s" if secs == int(secs) else f"{secs:.1f}s"
+    m_part, s_part = divmod(int(secs), 60)
+    h_part, m_part = divmod(m_part, 60)
+    if h_part:
+        return f"{h_part}:{m_part:02d}:{s_part:02d}"
+    return f"{m_part}:{s_part:02d}"
+
+
 def _extract_trim(
     segment: str, video_duration: float | None
 ) -> dict[str, float] | ClarificationError:
@@ -454,10 +543,36 @@ def _extract_trim(
         if not m:
             continue
         kind = rtp['kind']
-        n = float(m.group('n'))
+        try:
+            n = float(m.group('n'))
+        except (ValueError, TypeError):
+            n = 0.0  # timestamp form — individual handlers re-parse via _parse_time_expr
         unit = m.group('unit').lower() if 'unit' in m.groupdict() and m.group('unit') else 's'
         dur_secs = n * _UNIT_TO_SECS.get(unit, 1)
 
+        # --- single-point directional cut kinds ---
+        if kind in ('cut_before', 'keep_after'):
+            n_val = m.group('n')
+            t = _parse_time_expr(n_val + ' ' + unit if ':' not in n_val else n_val)
+            if video_duration is not None:
+                return {'trim_start': t, 'trim_end': video_duration}
+            return {'trim_start': t}
+        if kind in ('cut_after', 'keep_before'):
+            n_val = m.group('n')
+            t = _parse_time_expr(n_val + ' ' + unit if ':' not in n_val else n_val)
+            return {'trim_start': 0.0, 'trim_end': t}
+        if kind == 'cut_first_2':
+            if video_duration is not None:
+                return {'trim_start': dur_secs, 'trim_end': video_duration}
+            return {'trim_start': dur_secs}
+        if kind == 'cut_last_2':
+            if video_duration is None:
+                return ClarificationError(
+                    reason="I need the video's duration to resolve that.",
+                    code='need_duration',
+                )
+            return {'trim_start': 0.0, 'trim_end': video_duration - dur_secs}
+        # --- end single-point kinds ---
         if kind == 'first':
             return {'trim_start': 0.0, 'trim_end': dur_secs}
         if kind in ('last', 'keep_last'):
@@ -517,6 +632,22 @@ def _extract_trim(
                 return {'trim_start': 0.0, 'trim_end': dur}
             except Exception:
                 continue
+
+    # 4. Ambiguous "cut at X" — ask the user which side to keep.
+    m = CUT_AT_PATTERN.search(seg)
+    if m:
+        t_str = m.group('t')
+        unit = m.group('unit') or 's'
+        try:
+            t = _parse_time_expr(t_str + ' ' + unit if ':' not in t_str else t_str)
+            t_disp = _fmt_time(t)
+            return ClarificationError(
+                reason=f"Cut at {t_disp} — keep the part before or after?",
+                options=[f"keep before {t_disp}", f"keep after {t_disp}"],
+                code='cut_at_ambiguous',
+            )
+        except Exception:
+            pass
 
     return {}
 
@@ -636,9 +767,36 @@ def _parse_segment(
         return trim_result
     fields.update(trim_result)
 
+    # Spatial crop check — aspect ratios and explicit crop+dims override other intents.
+    # Only fires when no time-trim was found (so "crop from 0:30 to 1:00" stays as trim).
+    if not trim_result:
+        crop_fields = _extract_crop(segment)
+        if crop_fields:
+            fields.update(crop_fields)
+            fmt = _extract_format(segment)
+            if fmt and fmt not in _AUDIO_FORMATS:
+                fields['target_format'] = fmt
+            return fields
+
     res = _extract_resolution(segment)
     if res:
         fields['target_resolution'] = res
+
+    if intent == 'record':
+        fields['record_screen'] = True
+        # Promote any trim_end → record_duration, then clear it (not a file trim)
+        if fields.get('trim_end'):
+            fields['record_duration'] = fields.pop('trim_end')
+        fields.pop('trim_start', None)
+        return fields
+
+    if intent == 'crop':
+        crop_fields = _extract_crop(segment)
+        # If no explicit dimensions, fall back to aspect ratio from text
+        if not crop_fields:
+            crop_fields = _extract_crop(segment)
+        fields.update(crop_fields)
+        return fields
 
     if intent == 'extract_audio':
         # Intent already established — don't re-run verb detection.
@@ -684,6 +842,12 @@ def _parse_segment(
         if fmt:
             fields['target_format'] = fmt
 
+        # Arbitrary resize dimensions / scale percentage
+        resize_fields = _extract_resize(segment)
+        # Only apply if no preset resolution already set (preset takes priority)
+        if resize_fields and not fields.get('target_resolution'):
+            fields.update(resize_fields)
+
         audio_result = _extract_audio(segment)
         if isinstance(audio_result, ClarificationError):
             return audio_result
@@ -720,6 +884,12 @@ _MERGEABLE_FIELDS = {
     'download_audio_format', 'download_subs', 'download_sub_lang',
     'download_sub_auto', 'download_playlist', 'download_thumbnail',
     'download_metadata',
+    # resize
+    'target_width', 'target_height', 'target_scale_pct',
+    # crop
+    'crop_w', 'crop_h', 'crop_x', 'crop_y', 'crop_aspect',
+    # record
+    'record_screen', 'record_audio_device', 'record_duration',
 }
 
 
@@ -820,15 +990,16 @@ def parse(
             'target_filesize_mb', 'target_preset', 'audio_format',
         )) or merged.get('extract_audio', False)
 
-        # URL supplies the input — skip the no_input_file guard for downloads
-        if has_edit and not has_files and not url:
+        # URL or screen-record mode supplies its own input — skip file guard
+        is_record = merged.get('record_screen', False)
+        if has_edit and not has_files and not url and not is_record:
             return ClarificationError(
                 reason="No input file specified.",
                 code='no_input_file',
             )
         plan_inputs = [resolved_files[0]] if resolved_files else []
 
-    # Pure download with no other recognised fields is still a valid request
+    # Pure download/record with no other recognised fields is still valid
     if not merged and not is_merge and not url:
         return ClarificationError(
             reason="I couldn't understand that request.",
@@ -891,4 +1062,15 @@ def parse(
         download_playlist=merged.get('download_playlist'),
         download_thumbnail=merged.get('download_thumbnail', False),
         download_metadata=merged.get('download_metadata', False),
+        target_width=merged.get('target_width'),
+        target_height=merged.get('target_height'),
+        target_scale_pct=merged.get('target_scale_pct'),
+        crop_w=merged.get('crop_w'),
+        crop_h=merged.get('crop_h'),
+        crop_x=merged.get('crop_x'),
+        crop_y=merged.get('crop_y'),
+        crop_aspect=merged.get('crop_aspect'),
+        record_screen=merged.get('record_screen', False),
+        record_audio_device=merged.get('record_audio_device'),
+        record_duration=merged.get('record_duration'),
     )

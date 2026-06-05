@@ -26,6 +26,20 @@ class EditPlan:
     download_playlist: bool | None = None     # None=default, True=force, False=single
     download_thumbnail: bool = False
     download_metadata: bool = False
+    # Arbitrary resize (beyond preset resolutions)
+    target_width: int | None = None
+    target_height: int | None = None
+    target_scale_pct: float | None = None
+    # Crop
+    crop_w: int | None = None
+    crop_h: int | None = None
+    crop_x: int | None = None      # left offset in px; None = auto-center
+    crop_y: int | None = None      # top offset in px; None = auto-center
+    crop_aspect: str | None = None  # "16:9", "4:3", "1:1", etc.
+    # Screen recording
+    record_screen: bool = False
+    record_audio_device: str | None = None
+    record_duration: float | None = None
 
 
 @dataclass

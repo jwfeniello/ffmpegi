@@ -26,13 +26,26 @@ def derive_output_path(plan: EditPlan, input_path: Path) -> Path:
 
     else:
         is_trim = plan.trim_start is not None or plan.trim_end is not None
-        is_resize = bool(plan.target_resolution)
+        is_resize = bool(
+            plan.target_resolution or plan.target_width or
+            plan.target_height or plan.target_scale_pct is not None
+        )
+        is_crop = bool(plan.crop_w or plan.crop_h or plan.crop_aspect)
         is_compress = plan.target_filesize_mb is not None or bool(plan.target_preset)
 
         if is_trim:
             suffix = '_trimmed'
+        elif is_crop:
+            suffix = '_cropped'
         elif is_resize:
-            suffix = f'_{plan.target_resolution}'
+            if plan.target_resolution:
+                suffix = f'_{plan.target_resolution}'
+            elif plan.target_width and plan.target_height:
+                suffix = f'_{plan.target_width}x{plan.target_height}'
+            elif plan.target_scale_pct is not None:
+                suffix = f'_{int(plan.target_scale_pct)}pct'
+            else:
+                suffix = '_resized'
         elif is_compress:
             suffix = '_compressed'
         else:

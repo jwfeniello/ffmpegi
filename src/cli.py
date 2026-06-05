@@ -24,6 +24,9 @@ from runner import run_ffmpeg, run_ytdlp             # noqa: E402
 from ffmpeg_check import check_ffmpeg, check_ytdlp   # noqa: E402
 from vocabulary import FILESIZE_PATTERNS             # noqa: E402
 from builder import build_ytdlp_args                 # noqa: E402
+from screen_capture import (                         # noqa: E402
+    list_audio_devices, build_record_args, default_output_path,
+)
 
 VIDEO_EXTS = frozenset({
     '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv',
@@ -158,8 +161,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         input_files = []
 
+    # Screen-record commands have no input file — skip the CWD fallback.
+    _RECORD_HINTS = ('record', 'screencast', 'screen capture', 'capture screen')
+    _is_record_request = any(h in request.lower() for h in _RECORD_HINTS)
+
     # CWD fallback (local-file mode only)
-    if not url and not input_files:
+    if not url and not input_files and not _is_record_request:
         cwd = _cwd_media_files()
         if len(cwd) == 1:
             input_files = cwd
@@ -173,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: {msg}", file=sys.stderr)
             return 1
 
-    # Verify every collected local file exists
+    # Verify every collected local file exists (not needed for record)
     for f in input_files:
         if not f.exists():
             print(f"File not found: {f}", file=sys.stderr)
@@ -222,6 +229,52 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.explain:
         _print_plan(plan)
+
+    # ------------------------------------------------------------------ #
+    # Screen-record path                                                   #
+    # ------------------------------------------------------------------ #
+    if plan.record_screen:
+        output_path = Path(args.output) if args.output else default_output_path()
+
+        # Ask about audio
+        audio_device: str | None = None
+        try:
+            ans = input("Capture audio? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            return 0
+        if ans in ('', 'y'):
+            devices = list_audio_devices()
+            if not devices:
+                print("No audio input devices found — recording without audio.")
+            else:
+                print("Audio input devices:")
+                for d in devices:
+                    print(f"  {d['index']}. {d['name']}")
+                try:
+                    choice = input(f"Pick a device [0]: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAborted.")
+                    return 0
+                idx = int(choice) if choice.isdigit() else 0
+                matched = next((d for d in devices if d['index'] == idx), devices[0])
+                audio_device = matched['name']
+
+        record_args = build_record_args(
+            output_path,
+            audio_device,
+            plan.record_duration,
+        )
+        if args.dry_run or args.verbose:
+            print(_fmt_cmd(record_args))
+        if args.dry_run:
+            return 0
+        print(f"Recording to {output_path}  (Ctrl+C to stop)")
+        try:
+            return run_ffmpeg(record_args, verbose=args.verbose)
+        except KeyboardInterrupt:
+            print("\nRecording stopped.")
+            return 0
 
     # ------------------------------------------------------------------ #
     # Download path                                                        #
