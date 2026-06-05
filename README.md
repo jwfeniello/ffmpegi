@@ -146,7 +146,7 @@ The parser is pure rule-based and deterministic. Same input always produces the 
 
 ## Not supported <sub>yet</sub>
 
-Subtitle burn-in, watermarks, color grading, HDR, stabilization, AI upscaling, denoise, transitions, reverse, speed changes, splitting one video into multiple files, or feeding your dog. The tool returns a clear message instead of trying.
+Subtitle burn-in, watermarks, color grading, HDR, stabilization, AI upscaling, denoise, transitions, reverse, speed changes, splitting one video into multiple files, or entering a ecuadorian bullfighting competition. It will let you know if it can't do something.
 
 # TLDR for regular(ish) people
 
