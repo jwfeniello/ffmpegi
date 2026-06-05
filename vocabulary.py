@@ -183,6 +183,20 @@ CONVERT_VERBS: List[str] = [
     "translate to", "shift to", "transition into", "re-encode", "format as", "bounce to"
 ]
 
+# --- RECORD_VERBS ---
+RECORD_VERBS: List[str] = [
+    "record screen", "screen record", "capture screen", "screencast",
+    "record my screen", "record the screen", "capture my screen",
+    "screen capture", "record desktop", "capture desktop",
+    "record my display", "capture my display", "record display",
+]
+
+# --- CROP_VERBS ---
+CROP_VERBS: List[str] = [
+    "crop", "crop to", "crop out", "trim frame", "cut frame",
+    "zoom crop", "letterbox crop", "remove black bars",
+]
+
 # --- RESIZE_VERBS ---
 RESIZE_VERBS: List[str] = [
     "make it", "drop it to", "bump up to", "resize", "scale", "scale down", "scale up",
@@ -191,6 +205,60 @@ RESIZE_VERBS: List[str] = [
     "resize to", "proportion to", "change dimensions to", "adjust size to",
     "change size to", "make resolution", "set frame size to", "force resolution to"
 ]
+
+# --- DIMENSIONS / SCALE / CROP patterns ---
+
+# "1280x720", "1920 x 1080"
+DIMENSIONS_PATTERN: Pattern = re.compile(
+    r'(?P<w>\d{2,5})\s*[xX×]\s*(?P<h>\d{2,5})(?:\s*(?:px|pixels?))?',
+    re.IGNORECASE,
+)
+# "640 by 480"
+DIMENSIONS_BY_PATTERN: Pattern = re.compile(
+    r'(?P<w>\d{2,5})\s+by\s+(?P<h>\d{2,5})(?:\s*(?:px|pixels?))?',
+    re.IGNORECASE,
+)
+# "50%", "75 percent"
+SCALE_PCT_PATTERN: Pattern = re.compile(
+    r'(?P<pct>\d+(?:\.\d+)?)\s*(?:%|percent)',
+    re.IGNORECASE,
+)
+# "2x", "0.5x" (multiplier form — must not match timestamps)
+SCALE_MULT_PATTERN: Pattern = re.compile(
+    r'(?<!\d[:/])(?P<mult>\d+(?:\.\d+)?)[xX]\b(?!\d)',
+    re.IGNORECASE,
+)
+# Word-based scale factors
+SCALE_WORDS: Dict[str, float] = {
+    'half': 50.0, 'quarter': 25.0, 'third': 33.3,
+    'double': 200.0, 'twice': 200.0, 'triple': 300.0,
+}
+
+# Crop aspect ratio map (explicit list avoids timestamp false-positives)
+CROP_ASPECT_MAP: Dict[str, str] = {
+    '16:9': '16:9', '16/9': '16:9', 'widescreen': '16:9', 'wide screen': '16:9',
+    '4:3': '4:3', '4/3': '4:3', 'fullscreen': '4:3',
+    '1:1': '1:1', '1/1': '1:1', 'square': '1:1',
+    '9:16': '9:16', '9/16': '9:16', 'vertical': '9:16', 'portrait': '9:16',
+    '21:9': '21:9', '21/9': '21:9', 'ultrawide': '21:9',
+    '3:2': '3:2', '3/2': '3:2',
+    '2:1': '2:1', '2/1': '2:1',
+}
+
+# Crop position keywords → (x_is_left, y_is_top) — None means centre
+CROP_POSITION_MAP: Dict[str, tuple] = {
+    'top left': (0, 0), 'top-left': (0, 0),
+    'top right': (None, 0), 'top-right': (None, 0),   # None-x → right-align in builder
+    'top center': (None, 0), 'top-center': (None, 0),
+    'top': (None, 0),
+    'bottom left': (0, None), 'bottom-left': (0, None),
+    'bottom right': (None, None), 'bottom-right': (None, None),
+    'bottom center': (None, None), 'bottom-center': (None, None),
+    'bottom': (None, None),
+    'left': (0, None),
+    'right': (None, None),
+    'center': (None, None), 'middle': (None, None),
+}
 
 # --- COMPRESS_VERBS ---
 COMPRESS_VERBS: List[str] = [
@@ -304,7 +372,16 @@ DURATION_PATTERNS: List[Pattern] = [
 ]
 
 # --- RELATIVE_TIME_PATTERNS ---
+_TU = r"(?P<unit>s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)"
+_VERBS = r"(?:cut|remove|delete|drop|chop)"
 RELATIVE_TIME_PATTERNS: List[Dict[str, Any]] = [
+    # Single-point cut: unambiguous directional forms (before first/last to override them)
+    {"kind": "cut_first_2", "pattern": re.compile(rf"{_VERBS}\s+(?:off\s+)?(?:the\s+)?first\s+(?P<n>[0-9.]+)\s*{_TU}", re.IGNORECASE)},
+    {"kind": "cut_last_2",  "pattern": re.compile(rf"{_VERBS}\s+(?:off\s+)?(?:the\s+)?last\s+(?P<n>[0-9.]+)\s*{_TU}", re.IGNORECASE)},
+    {"kind": "cut_before",  "pattern": re.compile(rf"{_VERBS}\s+(?:(?!before\b|after\b)\w+\s+){{0,3}}before\s+(?P<n>[0-9:.]+)(?:\s*{_TU})?", re.IGNORECASE)},
+    {"kind": "cut_after",   "pattern": re.compile(rf"{_VERBS}\s+(?:(?!before\b|after\b)\w+\s+){{0,3}}after\s+(?P<n>[0-9:.]+)(?:\s*{_TU})?", re.IGNORECASE)},
+    {"kind": "keep_before", "pattern": re.compile(rf"keep\s+(?:(?!before\b|after\b)\w+\s+){{0,3}}before\s+(?P<n>[0-9:.]+)(?:\s*{_TU})?", re.IGNORECASE)},
+    {"kind": "keep_after",  "pattern": re.compile(rf"keep\s+(?:(?!before\b|after\b)\w+\s+){{0,3}}after\s+(?P<n>[0-9:.]+)(?:\s*{_TU})?", re.IGNORECASE)},
     {"kind": "first", "pattern": re.compile(r"first\s+(?P<n>[0-9.]+)\s*(?P<unit>s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)", re.IGNORECASE)},
     {"kind": "last", "pattern": re.compile(r"last\s+(?P<n>[0-9.]+)\s*(?P<unit>s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)", re.IGNORECASE)},
     {"kind": "middle", "pattern": re.compile(r"middle\s+(?P<n>[0-9.]+)\s*(?P<unit>s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours)", re.IGNORECASE)},
@@ -516,6 +593,13 @@ SUB_LANG_MAP: Dict[str, str] = {
     'italian': 'it', 'russian': 'ru',
 }
 
+# Matches the ambiguous "cut/chop/split/slice/snip at X" form (no direction given).
+CUT_AT_PATTERN: Pattern = re.compile(
+    r"\b(?:cut|chop|split|slice|snip)\b\s+(?:it\s+)?at\s+(?P<t>[0-9:.]+)"
+    r"(?:\s*(?P<unit>s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours))?",
+    re.IGNORECASE,
+)
+
 TOTAL_ENTRIES = (
     len(SLANG_MAP) +
     len(ABBREVIATIONS) +
@@ -525,6 +609,8 @@ TOTAL_ENTRIES = (
     len(SEQUENCERS) +
     len(TRIM_VERBS) +
     len(CONVERT_VERBS) +
+    len(RECORD_VERBS) +
+    len(CROP_VERBS) +
     len(RESIZE_VERBS) +
     len(COMPRESS_VERBS) +
     len(EXTRACT_AUDIO_VERBS) +
