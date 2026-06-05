@@ -13,7 +13,7 @@
 
 <br/><br/>
 
-A command-line tool that turns natural-language edit and download requests into FFmpeg + yt-dlp commands and runs them.
+A command-line tool that turns natural-language edit and download requests into FFmpeg + yt-dlp commands instantly and runs them. No LLM needed. 
 
 ```bash
 ffmpegi convert this to mp4 video.avi
