@@ -6,18 +6,21 @@
 <sub><i>or ffmpeg idiot in my case</i></sub>
 
 <a href="#readme-top">
-  <img alt="typing" src="https://readme-typing-svg.demolab.com/?lines=ffmpegi+convert+this+to+mp4+video.avi;ffmpegi+compress+for+discord+big_video.mp4;ffmpegi+rip+the+audio+as+wav+speech.mkv;ffmpegi+compress+to+under+25+mb+video.mp4;ffmpegi+cut+from+1:30+to+2:45+clip.mov;ffmpegi+download+in+1080p+https://youtu.be/abc;ffmpegi+rip+the+audio+as+mp3+https://youtu.be/xyz;ffmpegi+download+and+compress+for+discord+URL;ffmpegi+merge+these+into+mkv+clip1.mp4+clip2.mp4;ffmpegi+make+this+720p+movie.mkv;ffmpegi+extract+audio+to+mp3+podcast.mp4;ffmpegi+resize+this+to+480p+anime.mp4&font=Fira+Code&size=20&duration=2600&pause=600&color=A855F7&center=true&width=720&height=46&vCenter=true"/>
+  <img alt="typing" src="https://readme-typing-svg.demolab.com/?lines=ffmpegi+convert+this+to+mp4+video.avi;ffmpegi+record+my+screen+for+30+seconds;ffmpegi+crop+to+1080x1080+clip.mp4;ffmpegi+compress+for+discord+big_video.mp4;ffmpegi+rip+the+audio+as+wav+speech.mkv;ffmpegi+compress+to+under+25+mb+video.mp4;ffmpegi+cut+from+1:30+to+2:45+clip.mov;ffmpegi+download+in+1080p+https://youtu.be/abc;ffmpegi+rip+the+audio+as+mp3+https://youtu.be/xyz;ffmpegi+download+and+compress+for+discord+URL;ffmpegi+merge+these+into+mkv+clip1.mp4+clip2.mp4;ffmpegi+make+this+720p+movie.mkv;ffmpegi+extract+audio+to+mp3+podcast.mp4;ffmpegi+resize+this+to+480p+anime.mp4&font=Fira+Code&size=20&duration=2600&pause=600&color=A855F7&center=true&width=720&height=46&vCenter=true"/>
 </a>
 
 </div>
 
 <br/><br/>
 
-A command-line tool that turns natural-language edit and download requests into FFmpeg + yt-dlp commands and instantly runs them. No LLM needed. 
+A command-line tool that turns natural-language edit, screen recording, and download requests into FFmpeg + yt-dlp commands and instantly runs them. No LLM needed.
 
 ```bash
 ffmpegi convert this to mp4 video.avi
 ffmpegi cut from 1:30 to 2:45 and make it 720p clip.mov
+ffmpegi record my screen for 1 minute and save as demo.mp4
+ffmpegi crop to 1920x1080 and compress for discord gameplay.mp4
+ffmpegi convert this to mp4 using nvidia gpu video.avi
 ffmpegi compress for discord big_video.mp4
 ffmpegi rip the audio as wav speech.mkv
 ffmpegi compress to under 25 mb video.mp4
@@ -29,7 +32,7 @@ The tool figures out which arguments are the request, which are file paths, and 
 
 ## Requirements
 
-- Windows 10 or later
+- Windows 10 or later, macOS, or Linux (Screen recording works everywhere!)
 - [FFmpeg](https://www.gyan.dev/ffmpeg/builds/) on your PATH
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) on your PATH (only needed for URL downloads)
 - Python 3.10+ (only if building from source)
@@ -52,19 +55,21 @@ ffmpegi --help
 
 ## What it does
 
-Six edit operations plus URL downloading, all combinable in one request:
+Eight edit operations plus URL downloading and cross-platform screen recording, all combinable in one request:
 
 | Task | Example |
 |------|---------|
 | Trim | `cut from 1:30 to 2:45` |
 | Convert | `convert to mp4` |
 | Resize | `make it 720p` |
+| Crop | `crop to 1920x1080` |
+| Record | `record my screen for 15 seconds` |
 | Compress | `compress for discord` or `under 25 mb` |
 | Extract audio | `rip the audio as wav` |
 | Merge | `merge these into mkv clip1.mp4 clip2.mp4` |
 | Download | `download in 1080p URL` |
 
-Multi-intent works: `cut from 0:30 to 1:00 and make it 480p and compress for discord`.
+Multi-intent works: `cut from 0:30 to 1:00 and crop to 1080x1080 and compress for discord`.
 
 Download + edit in one command: `download in 1080p and compress for discord URL` runs yt-dlp then ffmpeg back-to-back.
 
@@ -123,7 +128,7 @@ Build the exe:
 pyinstaller --onefile --name ffmpegi --add-data "vocabulary.py;." --add-data "src;src" --collect-all word2number --collect-all rapidfuzz --hidden-import shlex --paths src src/main.py
 ```
 
-The exe lands in `dist\ffmpegi.exe`. Copy it onto your PATH.
+The exe lands in `distfmpegi.exe`. Copy it onto your PATH.
 
 ## Tests
 
@@ -137,7 +142,7 @@ python -m pytest tests/ -q
 
 1. Normalize, slang, abbreviations, hedge words, sequencers (1000+ vocabulary entries)
 2. Parse, span masking, sequencer splitting, fuzzy verb matching with rapidfuzz
-3. Disambiguate, resolve "from X to Y" vs "for N seconds", multi-intent merging, conflict detection
+3. Disambiguate, resolve "from X to Y" vs "for N seconds" (now powered by a significantly more robust trimming engine), multi-intent merging, conflict detection
 4. Compute, bitrate math for filesize targets
 5. Build, deterministic EditPlan to FFmpeg or yt-dlp argv
 6. Execute, subprocess, stream stderr, parse `time=` for progress, hand off downloaded paths to ffmpeg if requested
@@ -159,9 +164,14 @@ ffmpegi convert dis video to mkv stupidvideofile.mp4
 and poof (◡◕⏖◕)ᑐ🝐 ⠁⭒*.✩.*⭒⠁  
 that mf is now stupidvideofile.mkv
 
+or to easily record your desktop without booting up OBS:
+
+```bash
+ffmpegi record dis screen for 5 minutes
+```
+
 or for the YouTube ting
 
 ```bash
 ffmpegi download in 720p and compress for discord https://youtube.com/watch?v=whatever
 ```
-
