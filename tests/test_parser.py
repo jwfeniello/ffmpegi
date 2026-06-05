@@ -308,6 +308,111 @@ class TestTrimExtraction:
         r = _extract_trim("convert to mp4", None)
         assert r == {}
 
+    # --- single-point cut: ambiguous "cut at X" ---
+
+    def test_cut_at_seconds_is_ambiguous(self):
+        r = _extract_trim("cut at 10 seconds", None)
+        assert isinstance(r, ClarificationError)
+        assert r.code == 'cut_at_ambiguous'
+        assert 'before' in r.options[0]
+        assert 'after' in r.options[1]
+
+    def test_chop_at_timestamp_is_ambiguous(self):
+        r = _extract_trim("chop at 1:30", None)
+        assert isinstance(r, ClarificationError)
+        assert r.code == 'cut_at_ambiguous'
+
+    def test_split_at_minutes_is_ambiguous(self):
+        r = _extract_trim("split at 2 minutes", None)
+        assert isinstance(r, ClarificationError)
+        assert r.code == 'cut_at_ambiguous'
+
+    def test_cut_at_shows_time_in_message(self):
+        r = _extract_trim("cut at 30 seconds", None)
+        assert isinstance(r, ClarificationError)
+        assert '30s' in r.reason
+
+    def test_cut_at_timestamp_shows_formatted_time(self):
+        r = _extract_trim("cut at 1:30", None)
+        assert isinstance(r, ClarificationError)
+        assert '1:30' in r.reason
+
+    # --- single-point cut: unambiguous directional forms ---
+
+    def test_cut_before_seconds(self):
+        r = _extract_trim("cut before 30 seconds", None)
+        assert r == {'trim_start': 30.0}
+
+    def test_cut_before_with_duration(self):
+        r = _extract_trim("cut before 30 seconds", 180.0)
+        assert r == {'trim_start': 30.0, 'trim_end': 180.0}
+
+    def test_cut_before_timestamp(self):
+        r = _extract_trim("cut before 1:30", None)
+        assert r == {'trim_start': 90.0}
+
+    def test_remove_before(self):
+        r = _extract_trim("remove everything before 1:00", None)
+        assert r == {'trim_start': 60.0}
+
+    def test_delete_before(self):
+        r = _extract_trim("delete before 45 seconds", None)
+        assert r == {'trim_start': 45.0}
+
+    def test_cut_after_seconds(self):
+        r = _extract_trim("cut after 2 minutes", None)
+        assert r == {'trim_start': 0.0, 'trim_end': 120.0}
+
+    def test_cut_after_timestamp(self):
+        r = _extract_trim("cut after 1:30", None)
+        assert r == {'trim_start': 0.0, 'trim_end': 90.0}
+
+    def test_remove_everything_after(self):
+        r = _extract_trim("remove everything after 30 seconds", None)
+        assert r == {'trim_start': 0.0, 'trim_end': 30.0}
+
+    def test_keep_before(self):
+        r = _extract_trim("keep before 2 minutes", None)
+        assert r == {'trim_start': 0.0, 'trim_end': 120.0}
+
+    def test_keep_everything_before(self):
+        r = _extract_trim("keep everything before 1:00", None)
+        assert r == {'trim_start': 0.0, 'trim_end': 60.0}
+
+    def test_keep_after(self):
+        r = _extract_trim("keep after 30 seconds", None)
+        assert r == {'trim_start': 30.0}
+
+    def test_keep_everything_after(self):
+        r = _extract_trim("keep everything after 1:30", None)
+        assert r == {'trim_start': 90.0}
+
+    def test_cut_the_first_n_seconds(self):
+        r = _extract_trim("cut the first 30 seconds", None)
+        assert r == {'trim_start': 30.0}
+
+    def test_remove_the_first_n_minutes(self):
+        r = _extract_trim("remove the first 1 minute", None)
+        assert r == {'trim_start': 60.0}
+
+    def test_cut_the_last_n_seconds_needs_duration(self):
+        r = _extract_trim("cut the last 30 seconds", None)
+        assert isinstance(r, ClarificationError)
+        assert r.code == 'need_duration'
+
+    def test_cut_the_last_n_seconds_with_duration(self):
+        r = _extract_trim("cut the last 30 seconds", 180.0)
+        assert r == {'trim_start': 0.0, 'trim_end': 150.0}
+
+    def test_delete_the_last_n_minutes_with_duration(self):
+        r = _extract_trim("delete the last 2 minutes", 300.0)
+        assert r == {'trim_start': 0.0, 'trim_end': 180.0}
+
+    def test_chop_first_still_works(self):
+        # Ensure original "chop off the first" pattern still works.
+        r = _extract_trim("chop off the first 10 seconds", 60.0)
+        assert r == {'trim_start': 10.0, 'trim_end': 60.0}
+
 
 class TestCompute:
     def test_basic_25mb_60s(self):
@@ -762,3 +867,103 @@ class TestMultiRangeTrim:
         assert isinstance(r, EditPlan)
         assert r.trim_start == pytest.approx(84.0)
         assert r.trim_end == pytest.approx(113.0)
+
+
+# --- Fix 3: audio-only target_format normalization ---
+class TestAudioOnlyFormatNormalization:
+    """'convert to wav/mp3/…' must route through extract_audio, not video codec."""
+
+    def test_convert_to_wav(self):
+        r = parse("convert to wav", files=_F)
+        assert isinstance(r, EditPlan)
+        assert r.extract_audio is True
+        assert r.audio_format == "wav"
+        assert r.target_format is None
+
+    def test_convert_to_mp3(self):
+        r = parse("convert to mp3", files=_F)
+        assert isinstance(r, EditPlan)
+        assert r.extract_audio is True
+        assert r.audio_format == "mp3"
+        assert r.target_format is None
+
+    def test_convert_to_m4a(self):
+        r = parse("convert to m4a", files=[Path("video.mkv")])
+        assert isinstance(r, EditPlan)
+        assert r.extract_audio is True
+        assert r.audio_format == "m4a"
+
+    def test_convert_to_flac(self):
+        r = parse("convert to flac", files=[Path("song.wav")])
+        assert isinstance(r, EditPlan)
+        assert r.extract_audio is True
+        assert r.audio_format == "flac"
+
+    def test_video_format_unchanged(self):
+        r = parse("convert to mp4", files=[Path("video.mkv")])
+        assert isinstance(r, EditPlan)
+        assert r.extract_audio is False
+        assert r.target_format == "mp4"
+
+    def test_extract_audio_as_wav_still_works(self):
+        r = parse("extract audio as wav", files=_F)
+        assert isinstance(r, EditPlan)
+        assert r.extract_audio is True
+        assert r.audio_format == "wav"
+
+
+class TestBuilderAudioOnlyFormats:
+    """Builder must emit -vn + correct codec, no -c:v, for all audio-only formats."""
+
+    def _plan(self, fmt: str) -> EditPlan:
+        return EditPlan(
+            inputs=[Path("video.mp4")],
+            extract_audio=True,
+            audio_format=fmt,
+        )
+
+    def _args(self, fmt: str) -> list[str]:
+        from pathlib import Path as P
+        return build_ffmpeg_args(self._plan(fmt), P(f"output.{fmt}"))
+
+    def test_wav_codec(self):
+        args = self._args("wav")
+        assert "-vn" in args
+        assert "pcm_s16le" in args
+        assert "-c:v" not in args
+
+    def test_mp3_codec(self):
+        args = self._args("mp3")
+        assert "-vn" in args
+        assert "libmp3lame" in args
+        assert "-c:v" not in args
+
+    def test_m4a_codec(self):
+        args = self._args("m4a")
+        assert "-vn" in args
+        assert "aac" in args
+        assert "-c:v" not in args
+
+    def test_flac_codec(self):
+        args = self._args("flac")
+        assert "-vn" in args
+        assert "flac" in args
+        assert "-c:v" not in args
+
+    def test_aac_codec(self):
+        args = self._args("aac")
+        assert "-vn" in args
+        assert "aac" in args
+        assert "-c:v" not in args
+
+    def test_ogg_codec(self):
+        args = self._args("ogg")
+        assert "-vn" in args
+        assert "libvorbis" in args
+        assert "-c:v" not in args
+
+    def test_opus_codec(self):
+        args = self._args("opus")
+        assert "-vn" in args
+        assert "libopus" in args
+        assert "-c:v" not in args
