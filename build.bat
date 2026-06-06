@@ -8,6 +8,11 @@ pyinstaller ^
     --name ffmpegi ^
     --add-data "vocabulary.py;." ^
     --add-data "src;src" ^
+    --hidden-import shlex ^
+    --hidden-import dataclasses ^
+    --hidden-import argparse ^
+    --hidden-import platform ^
+    --collect-all rapidfuzz ^
     src\main.py
 
 if %ERRORLEVEL% neq 0 (
