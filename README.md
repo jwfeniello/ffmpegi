@@ -164,7 +164,7 @@ ffmpegi convert dis video to mkv stupidvideofile.mp4
 and poof (◡◕⏖◕)ᑐ🝐 ⠁⭒*.✩.*⭒⠁  
 that mf is now stupidvideofile.mkv
 
-or to easily record your desktop without booting up OBS:
+or to easily record your desktop:
 
 ```bash
 ffmpegi record dis screen for 5 minutes
